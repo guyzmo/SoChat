@@ -17,7 +17,7 @@ long_description = """
 
 %(README.md)s
 
-""" % read('README.rst')
+""" % read('README.md')
 
 setup(name='SOChat',
       version='0.1',

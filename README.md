@@ -18,6 +18,7 @@ Build
 
 to build the tool for development:
 
+    % mkdir var
     % pip install zc.buildout
     % buildout
 
