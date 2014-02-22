@@ -129,12 +129,16 @@ class SoUser(User):
     def __init__(self, *args, **kwarg):
         User.__init__(self, *args, **kwarg)
         self.userLeft = 0
+        self.userJoined = 0
 
 class SoGroup(Group):
-    def __init__(self, realm, *args, **kwarg):
+    def __init__(self, realm, name, users = {}, meta={"topic":"", "topic_author":""}):
         self.realm = realm
         self.so = realm.so
-        Group.__init__(self, *args, **kwarg)
+
+        self.name = name
+        self.users = users
+        self.meta = meta
 
         first_call = True
         def cb(msg):
