@@ -45,9 +45,8 @@ class StackOverflowAdapter(IExternalChecker):
             return False
         return self.so.is_authenticated()
 
-    def getNickname(self):
-        return "zmo"
-
+    def getMyUserData(self):
+        return self.so.get_my_info()
 
     def channels(self):
         for key, room in self.so.list_all_rooms().iteritems():
@@ -92,7 +91,7 @@ class ExternalCredentialsChecker:
 
     def _cbPasswordMatch(self, matched, username):
        if matched:
-           return self.ext.getNickname()
+           return self.ext.getMyUserData().values() + [username,]
        log.msg("User failed to log: {}".format(username))
        return failure.Failure(error.UnauthorizedLogin())
 
@@ -121,15 +120,60 @@ class SoChatIRCUser(IRCUser):
         print "CONNECTION MADE", self
         self.realm.clients.append(self)
 
+    def irc_WHOWAS(self, prefix, args):
+        print "irc_WHOWAS", prefix, args, self.realm.users
+        self.sendMessage(irc.RPL_WHOISUSER, args[0], "USERNAME", self.realm.name, '*', ':' + "REALNAME")
+        self.sendMessage(irc.RPL_WHOISSERVER, args[0], 'server', ':' + self.realm.name)
+
+    def irc_WHOIS(self, prefix, params):
+        """Whois query
+
+        Parameters: [ <target> ] <mask> *( "," <mask> )
+        """
+        def cbUser(user):
+            self.whois(
+                self.name,
+                user.name, user.name, self.realm.name,
+                user.name, self.realm.name, 'SoChat IRC Gateway', False,
+                int(time() - user.lastMessage), user.signOn,
+                ['#' + group.name for group in user.itergroups()])
+
+        def ebUser(err):
+            err.trap(ewords.NoSuchUser)
+            self.sendMessage(
+                irc.ERR_NOSUCHNICK,
+                user,
+                params[0],
+                ":No such nick/channel")
+
+        try:
+            user = params[0].decode(self.encoding)
+        except UnicodeDecodeError:
+            self.sendMessage(
+                irc.ERR_NOSUCHNICK,
+                user,
+                params[0],
+                ":No such nick/channel")
+            return
+
+        self.realm.lookupUser(user).addCallbacks(cbUser, ebUser)
+
 
 class SoChatIRCFactory(IRCFactory):
     protocol = SoChatIRCUser
 
+import time
+
 class SoUser(User):
-    def __init__(self, *args, **kwarg):
-        User.__init__(self, *args, **kwarg)
+    def __init__(self, name, user=None, real=None, host=None):
+        print "SoUser", name, user, real, host
+        User.__init__(self, name)
         self.userLeft = 0
         self.userJoined = 0
+        self.signOn = 0
+        self.username = user
+        self.realname = real
+        self.hostname = host
 
 class SoGroup(Group):
     def __init__(self, realm, name, users = {}, meta={"topic":"", "topic_author":""}):
@@ -177,16 +221,32 @@ class SoChatRealm(object):
         self.name = name
         self.so = so
         self.groups = {}
+        self.users = {}
         self.clients = []
 
-    def userFactory(self, name):
-        print "USER FACTORY", name
+    def userFactory(self, name, i=None, f=None):
+        print "USER FACTORY", name, i ,f
+        if i and f:
+            return SoUser(name, f.split('@')[0], i, f.split('@')[-1])
         return SoUser(name)
 
 
     def groupFactory(self, name):
         print "GROUP FACTORY", name
-        return SoGroup(self, name)
+        group = self.so.lookupgroup(name)
+        if group:
+            try:
+                print group['users']
+                group = SoGroup(self, unicode(name),
+                            dict([(u[0], SoUser(*u)) for u in group['users']]),
+                            {'topic': group['topic'],
+                            'topic_author':''})
+                self.groups[name] = group
+                return group
+            finally:
+                group.first_call = False
+        else:
+            return None
 
 
     def logoutFactory(self, avatar, facet):
@@ -202,6 +262,10 @@ class SoChatRealm(object):
         print "REQ AVATAR", avatarId, mind, interfaces
         if isinstance(avatarId, str):
             avatarId = avatarId.decode(self._encoding)
+        if isinstance(avatarId, list):
+            avatarName = avatarId[0]
+            avatarUser = avatarId[1]
+            avatarHost = avatarId[2]
         def gotAvatar(avatar):
             if avatar.realm is not None:
                 raise ewords.AlreadyLoggedIn()
@@ -209,13 +273,13 @@ class SoChatRealm(object):
                 facet = iface(avatar, None)
                 if facet is not None:
                     avatar.loggedIn(self, mind)
-                    mind.name = avatarId
+                    mind.name = avatarName
                     mind.realm = self
                     mind.avatar = avatar
                     return iface, facet, self.logoutFactory(avatar, facet)
             raise NotImplementedError(self, interfaces)
 
-        return self.getUser(avatarId).addCallback(gotAvatar)
+        return self.createUser(*avatarId).addCallback(gotAvatar)
 
 
     # IChatService, mostly.
@@ -226,7 +290,10 @@ class SoChatRealm(object):
     def getGroup(self, name):
         print "GETGROUP", name
         assert isinstance(name, unicode)
-        return self.lookupGroup(name)
+        def ebGroup(err):
+            err.trap(ewords.NoSuchGroup)
+            return self.createGroup(name)
+        return self.lookupGroup(name).addErrback(ebGroup)
 
     def getUser(self, name):
         print "GETUSER", name
@@ -239,14 +306,14 @@ class SoChatRealm(object):
         return self.lookupUser(name)
 
 
-    def createUser(self, name):
+    def createUser(self, name, i=None, f=None):
         print "CREATEUSER", name
         assert isinstance(name, unicode)
         def cbLookup(user):
             return failure.Failure(ewords.DuplicateUser(name))
         def ebLookup(err):
             err.trap(ewords.NoSuchUser)
-            return self.userFactory(name)
+            return self.userFactory(name, i, f)
 
         name = name.lower()
         d = self.lookupUser(name)
@@ -280,14 +347,23 @@ class SoChatRealm(object):
         return defer.succeed(user)
 
     def addGroup(self, group):
-        print "ADDGROUP", group
+        print "ADDGROUP", group.name
+        self.groups[group.name] = group
         return defer.succeed(group)
 
     def lookupUser(self, name):
         print "LOOKUPUSER", name
         assert isinstance(name, unicode)
+
+        users = {}
+        for g in self.groups.values():
+            users.update(g.users)
+
+        if name in users:
+            return defer.succeed(users[name])
+
         if self.so.lookupuser(name):
-            return defer.succeed(name)
+            return defer.succeed(SoUser(name))
         else:
             return defer.fail(failure.Failure(ewords.NoSuchUser(name)))
 
@@ -298,19 +374,7 @@ class SoChatRealm(object):
         if name in self.groups:
             return defer.succeed(self.groups[name])
 
-        group = self.so.lookupgroup(name)
-        if group:
-            try:
-                group = SoGroup(self, unicode(name),
-                            dict([(u, SoUser(u)) for u in group['users']]),
-                            {'topic': group['topic'],
-                            'topic_author':''})
-                self.groups[name] = group
-                return defer.succeed(group)
-            finally:
-                group.first_call = False
-        else:
-            return defer.fail(failure.Failure(ewords.NoSuchGroup(name)))
+        return defer.fail(failure.Failure(ewords.NoSuchGroup(name)))
 
 
 def run():
