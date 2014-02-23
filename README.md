@@ -5,6 +5,8 @@ this tool exposes an IRC server on port 6667 for localhost.
 Connect to it using your favorite IRC client and you'll be
 able to access all Stack Overflow channels.
 
+![screenshot](http://m0g.net/stuff/sochat-sshot.png)
+
 Disclaimer
 ---
 
