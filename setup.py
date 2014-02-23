@@ -38,7 +38,7 @@ setup(name='SOChat',
       data_files=[('config', ['etc/so-config.ini'])],
       install_requires=[
           'twisted',
-          'StackOverflow',
+          'pystackoverflow',
           'argparse',
           'setuptools',
       ],
