@@ -140,20 +140,24 @@ class SoGroup(Group):
         self.users = users
         self.meta = meta
 
-        first_call = True
+        self.first_call = True
         def cb(msg):
             for c in self.realm.clients:
-                if not first_call and c.nickname == msg['user_name']:
+                # used to show nicknames when loading previous discussions,
+                # looks like xchat does not like that, but irssi has no problem
+                # with it.
+                if not self.first_call and c.name == msg['user_name']:
                     continue
-                for sub_msg in msg['content'].splitlines():
-                    c.privmsg("{}!{}@{}".format(msg['user_name'].lower().replace(' ','-'), msg['user_id'], self.name),
-                            '#{}'.format(self.name), sub_msg)
+                # we get multiline content, so first, let's split it
+                for sub_msg in html2md(msg['content']).splitlines():
+                    # weed out empty lines
+                    if len(sub_msg.strip()) > 0:
+                        # send the message to the user by building the names
+                        c.privmsg("{}!{}@{}".format(msg['user_name'].lower().replace(' ','-'), msg['user_id'], self.name),
+                                '#{}'.format(self.name), sub_msg)
         refresh = self.so.so.connect_to_chat(int(self.name), cb)
         def cb_refresh():
-            try:
-                return refresh()
-            finally:
-                first_call = False
+            return refresh()
         self.watch = task.LoopingCall(cb_refresh)
         self.watch.start(2)
 
@@ -296,12 +300,15 @@ class SoChatRealm(object):
 
         group = self.so.lookupgroup(name)
         if group:
-            group = SoGroup(self, unicode(name),
-                          dict([(u, SoUser(u)) for u in group['users']]),
-                          {'topic': group['topic'],
-                           'topic_author':''})
-            self.groups[name] = group
-            return defer.succeed(group)
+            try:
+                group = SoGroup(self, unicode(name),
+                            dict([(u, SoUser(u)) for u in group['users']]),
+                            {'topic': group['topic'],
+                            'topic_author':''})
+                self.groups[name] = group
+                return defer.succeed(group)
+            finally:
+                group.first_call = False
         else:
             return defer.fail(failure.Failure(ewords.NoSuchGroup(name)))
 
