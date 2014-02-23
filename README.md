@@ -20,7 +20,6 @@ Build
 
 to build the tool for development:
 
-    % mkdir var
     % pip install zc.buildout
     % buildout
 
@@ -38,6 +37,40 @@ then open your favorite IRC client and connect to it:
 where `PASSWORD` is your stackoverflow password and `LOGIN` your stackoverflow login
 (which usually is your email). It's only supporting StackExchange openid service at
 the time being, though it's easy to switch to google openid.
+
+Implemented
+---
+
+ * login to SO using openid
+ * join one channel
+ * talk and lurk that channel
+ * commands:
+  * /whois
+  * /whowas
+  * /who
+  * /names
+  * /join
+  * /list (which gives only the list of chans from chat.stackoverflow.com mainpage)
+ * translates html from SO Chat server to markdown
+ * breaks multiline messages in several messages
+
+Known bugs (or bugs-alike)
+---
+
+ * no command line argument parsing (hint: add `docopt`), which could solve:
+  * can only login through Stack Overflow OpenID (Google is supported as well but not available)
+  * cannot change port
+  * cannot change host
+  * cannot change cookiejar
+ * only one user can use the service
+  * if two users connect → undefined/unknown behaviour (it may kill pandas)
+ * there's a lot of exceptions in the log to be found
+ * there's a lot of code that I'm not sure it's really useful
+ * it's all in one file, it needs more modularity, dude!
+ * only *one* chan can be joined at a time, that sucks, uh?
+ * only *one* chat server can be connected to at a time
+  * it could be possible to join channels on other servers as well... or have one server-proxy per SO chat server?
+ * (with Ballmer's voice) bugs, bugs, bugs!
 
 License
 ---
